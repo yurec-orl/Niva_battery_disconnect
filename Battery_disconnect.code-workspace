@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"name": "niva_battery_disconnect",
+			"path": "."
+		}
+	],
+	"settings": {}
+}
