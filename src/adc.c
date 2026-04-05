@@ -2,10 +2,18 @@
 
 /*
  * Voltage divider constants (see adc.h for derivation):
- *   Vbatt_10mv = (adc_raw * 40260UL) / 2253UL
+ *   Vbatt_mV    = (adc_raw * ADC_NUM) / ADC_DEN
+ *   Vbatt_10mv  = (adc_raw * ADC_NUM) / ADC_DEN / 10
  *
- * Numerator factor:   3300 * 1220 / 100 = 40260
- * Denominator factor: 1024 * 220  / 100 = 2252.8 -> rounded to 2253
+ * Numerator factor:   3300 * 1220 / 100 = 40260   (Vref_mV * (R1+R2) / 100)
+ * Denominator factor: 1024 * 220  / 100 = 2252    (ADC_BITS * R2 / 100)
+ *
+ * The /100 pre-scaling keeps intermediate values within uint32_t.
+ * The result of (raw * NUM / DEN) is in mV; divide by 10 for 10mV units.
+ *
+ * Example: raw=791 (2.55V node, ~14.1V battery)
+ *   791 * 40260 / 2252 / 10 = 31,845,660 / 2252 / 10 = 14141 / 10 = 1414
+ *   -> 1414 units of 10mV = 14.14 V  ✓
  */
 #define ADC_VREF_MV     3300UL   /* Reference voltage in mV */
 #define ADC_R1          1000UL   /* Upper resistor in kΩ    */
@@ -20,19 +28,19 @@ void adc_init(void) {
     /*
      * ADC1_Init parameters:
      *   ConversionMode : SINGLE  (software-triggered, one shot)
-     *   Channel        : ADC1_CHANNEL_4  (PD3/AIN4)
+     *   Channel        : ADC1_CHANNEL_5  (PD5/AIN5)
      *   Prescaler      : FCPU/8 -> 16MHz/8 = 2MHz (within 1-4MHz spec)
      *   ExtTrigger     : ADC1_EXTTRIG_TIM, DISABLED (software trigger)
      *   Align          : RIGHT (10-bit value in [9:0])
-     *   SchmittTrigCh  : ADC1_SCHMITTTRIG_CHANNEL4, DISABLE
+     *   SchmittTrigCh  : ADC1_SCHMITTTRIG_CHANNEL5, DISABLE
      *                    (disable Schmitt trigger on analog pin for accuracy)
      */
     ADC1_Init(ADC1_CONVERSIONMODE_SINGLE,
-              ADC1_CHANNEL_4,
+              ADC1_CHANNEL_5,
               ADC1_PRESSEL_FCPU_D8,
               ADC1_EXTTRIG_TIM, DISABLE,
               ADC1_ALIGN_RIGHT,
-              ADC1_SCHMITTTRIG_CHANNEL4, DISABLE);
+              ADC1_SCHMITTTRIG_CHANNEL5, DISABLE);
 
     /* Power on the ADC */
     ADC1_Cmd(ENABLE);
@@ -53,6 +61,23 @@ uint16_t adc_read_raw(void) {
 
 uint16_t adc_read_voltage_10mv(void) {
     uint16_t raw = adc_read_raw();
-    /* Vbatt in units of 10 mV (0.01 V resolution) */
-    return (uint16_t)(((uint32_t)raw * ADC_NUM) / ADC_DEN);
+    /*
+     * Formula: Vbatt_mV = raw * Vref_mV * (R1+R2) / (ADC_BITS * R2)
+     *                   = raw * ADC_NUM / ADC_DEN
+     * ADC_NUM and ADC_DEN are both pre-divided by 100, so the ratio is
+     * correct but the result is in mV. Divide by 10 to get 10mV units.
+     */
+    return (uint16_t)(((uint32_t)raw * ADC_NUM) / ADC_DEN / 10UL);
+}
+
+uint16_t adc_read_voltage_avg_10mv(void) {
+    uint8_t  i;
+    uint32_t sum = 0;
+    /*
+     * Average ADC_AVG_SAMPLES raw readings, then convert once.
+     * uint32_t sum: max = 1023 * 10 = 10230, well within range.
+     */
+    for (i = 0; i < ADC_AVG_SAMPLES; i++)
+        sum += adc_read_raw();
+    return (uint16_t)((sum * ADC_NUM) / ((uint32_t)ADC_AVG_SAMPLES * ADC_DEN * 10UL));
 }

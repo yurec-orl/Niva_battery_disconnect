@@ -43,4 +43,12 @@ uint16_t adc_read_raw(void);
  */
 uint16_t adc_read_voltage_10mv(void);
 
+/*
+ * Take ADC_AVG_SAMPLES consecutive raw readings, average them,
+ * then convert to voltage in units of 10 mV.
+ * Reduces noise compared to a single reading.
+ */
+#define ADC_AVG_SAMPLES  10
+uint16_t adc_read_voltage_avg_10mv(void);
+
 #endif /* _ADC_H_ */

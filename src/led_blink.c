@@ -26,8 +26,8 @@ void main() {
     adc_init();
 
     while (1) {
-        // Read battery voltage (10 mV units) and display as "XX.X"
-        voltage = adc_read_voltage_10mv();
+        // Read average battery voltage (10 samples) and display as "XX.X"
+        voltage = adc_read_voltage_avg_10mv();
         tm1637_display_voltage(voltage, TM1637_BRIGHTNESS_MAX);
 
         // Blink LED to show firmware is running (active low)

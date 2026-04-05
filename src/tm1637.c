@@ -132,35 +132,47 @@ void tm1637_display_number(uint16_t number, uint8_t brightness) {
 
 void tm1637_display_voltage(uint16_t voltage_10mv, uint8_t brightness) {
     /*
-     * voltage_10mv is in units of 10 mV, so 1200 = 12.00 V.
-     * We display it as "XX.X" (tenths of a volt), i.e. we divide by 10
-     * to get units of 100 mV (0.1 V) first.
+     * voltage_10mv is in units of 10 mV, so 1450 = 14.50 V.
+     * Divide by 10 (with rounding) to get units of 0.1 V:
      *
-     *   voltage_100mv = (voltage_10mv + 5) / 10   (rounded)
+     *   v = (voltage_10mv + 5) / 10    e.g. 1450 -> 145, 1085 -> 109
      *
-     * Then:
-     *   tens    = (voltage_100mv / 10) / 10     = voltage / 100
-     *   units   = (voltage_100mv / 10) % 10     = (voltage / 10) % 10
-     *   tenths  =  voltage_100mv       % 10
+     * Display as "XX.X" (leading digit can be 0 for voltages < 10 V):
+     *
+     *   d0 = v / 100              (tens:  0 or 1 for 8–16 V range)
+     *   d1 = (v / 10) % 10        (units digit)
+     *   d2 = v % 10               (tenths digit)
      *
      * Decimal point (bit 7 = 0x80) is set on the units digit (d1).
-     * d3 is left blank (0x00).
+     * d3 (rightmost) is left blank (0x00).
      *
      * Examples:
-     *   1200 -> 120 -> tens=1, units=2, tenths=0 -> "12.0"
-     *   1085 -> 109 -> tens=1, units=0, tenths=9 -> "10.9"  (rounded)
-     *   1450 -> 145 -> tens=1, units=4, tenths=5 -> "14.5"
+     *   1200 -> v=120 -> d0=1, d1=2, d2=0 -> "12.0"
+     *   1085 -> v=109 -> d0=1, d1=0, d2=9 -> "10.9"  (rounded)
+     *   1450 -> v=145 -> d0=1, d1=4, d2=5 -> "14.5"
+     *    800 -> v= 80 -> d0=0, d1=8, d2=0 ->  "8.0"
      */
     uint16_t v = (voltage_10mv + 5) / 10; /* round to 0.1 V steps */
-    uint8_t tens   = (uint8_t)((v / 100) % 10);
-    uint8_t units  = (uint8_t)((v / 10)  % 10);
-    uint8_t tenths = (uint8_t)( v        % 10);
+    /*
+     * v is in units of 0.1 V.  For car voltages (8–16 V), v = 80–160.
+     * We need to display "XX.X", e.g. v=145 -> "14.5".
+     *
+     *   d0 (leftmost) = tens digit  = v / 100          (0 or 1 for car voltages)
+     *   d1             = units digit = (v / 10) % 10
+     *   d2             = tenths digit = v % 10
+     *   d3             = blank (rightmost, unused)
+     *
+     * Decimal point (bit 7 = 0x80) is set on the units digit (d1).
+     */
+    uint8_t d0     = (uint8_t)(v / 100);
+    uint8_t d1     = (uint8_t)((v / 10) % 10);
+    uint8_t tenths = (uint8_t)(v % 10);
 
     tm1637_display(
-        TM1637_DIGITS[tens],
-        TM1637_DIGITS[units] | 0x80,  /* decimal point after units digit */
+        TM1637_DIGITS[d0],
+        TM1637_DIGITS[d1] | 0x80,  /* decimal point after units digit */
         TM1637_DIGITS[tenths],
-        TM1637_DIGITS[0],
+        0x00,                       /* rightmost digit blank */
         brightness
     );
 }
