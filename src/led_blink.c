@@ -11,7 +11,7 @@
 // F_CPU is defined by PlatformIO as 16000000UL for STM8S103
 static inline void delay_ms(uint16_t ms) {
     uint32_t i;
-    for (i = 0; i < ((F_CPU / 144000UL) * ms); i++)
+    for (i = 0; i < ((F_CPU / 87140UL) * ms); i++)
         __asm__("nop");
 }
 
