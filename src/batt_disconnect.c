@@ -12,8 +12,23 @@
 #define IGN_PORT    GPIOC
 #define IGN_PIN     GPIO_PIN_4
 
+// Solenoid driver on PD6: HIGH = 2N7000 ON -> IRF4905 ON -> solenoid energized -> battery DISCONNECTS
+#define SOL_PORT    GPIOD
+#define SOL_PIN     GPIO_PIN_6
+
+// Disconnect threshold: 11.9V = 1190 units of 10mV
+#define THRESH_10MV 1190U
+
 static inline bool ignition_on(void) {
     return GPIO_ReadInputPin(IGN_PORT, IGN_PIN) != RESET;
+}
+
+static inline void solenoid_on(void) {
+    GPIO_WriteHigh(SOL_PORT, SOL_PIN);
+}
+
+static inline void solenoid_off(void) {
+    GPIO_WriteLow(SOL_PORT, SOL_PIN);
 }
 
 // F_CPU is defined by PlatformIO as 16000000UL for STM8S103
@@ -32,6 +47,9 @@ void main() {
     // Initialize PC4 as floating input (external divider holds the level)
     GPIO_Init(IGN_PORT, IGN_PIN, GPIO_MODE_IN_FL_NO_IT);
 
+    // Initialize PD6 as push-pull output, initially low (solenoid OFF)
+    GPIO_Init(SOL_PORT, SOL_PIN, GPIO_MODE_OUT_PP_LOW_SLOW);
+
     // Initialize TM1637 display and ADC
     tm1637_init();
     adc_init();
@@ -41,11 +59,13 @@ void main() {
         voltage = adc_read_voltage_avg_10mv();
         tm1637_display_voltage(voltage, TM1637_BRIGHTNESS_MAX);
 
-        // LED ON when ignition is detected, OFF otherwise (active low)
-        if (ignition_on()) {
-            GPIO_WriteLow(LED_PORT, LED_PIN);   // LED ON
+        // Disconnect battery if voltage below threshold and ignition is OFF
+        if (voltage < THRESH_10MV && !ignition_on()) {
+            solenoid_on();
+            GPIO_WriteLow(LED_PORT, LED_PIN);   // LED ON — disconnected
         } else {
-            GPIO_WriteHigh(LED_PORT, LED_PIN);  // LED OFF
+            solenoid_off();
+            GPIO_WriteHigh(LED_PORT, LED_PIN);  // LED OFF — connected
         }
 
         delay_ms(100);
