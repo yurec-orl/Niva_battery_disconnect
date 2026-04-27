@@ -24,6 +24,9 @@
 #define _CLK_
 #include "stm8s_clk.h"
 
+#define _TIM4_
+#include "stm8s_tim4.h"
+
 /* Uncomment as needed:
 #define _ADC1_
 #define _ADC2_
