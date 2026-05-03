@@ -58,12 +58,7 @@ INTERRUPT_HANDLER(TIM4_UPD_OVF_IRQHandler,           23) {
     /* Inline register write -- no SPL call, no SDCC parameter slot */
     TIM4->SR1 &= (uint8_t)~TIM4_FLAG_UPDATE;
 
-    millis_counter++;
-
-    /* Shift-register debounce (8-sample history).
-     * Direct IDR reads -- no GPIO_ReadInputPin() SPL call (SDCC non-reentrant). */
-    btn_up_hist   = (uint8_t)((btn_up_hist   << 1) | ((GPIOC->IDR & (uint8_t)GPIO_PIN_3) ? 1u : 0u));
-    btn_down_hist = (uint8_t)((btn_down_hist << 1) | ((GPIOB->IDR & (uint8_t)GPIO_PIN_4) ? 1u : 0u));
+    millis_counter+=5;
 }
 
 INTERRUPT_HANDLER(EEPROM_EEC_IRQHandler,             24) {}

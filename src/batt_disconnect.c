@@ -55,8 +55,8 @@
 
 static void tim4_init(void) {
     TIM4_TimeBaseInit(TIM4_PRESCALER_128, 78);
-    TIM4->SR1 &= (uint8_t)~TIM4_FLAG_UPDATE;  /* clear stale UIF (inline)  */
-    TIM4->IER |= (uint8_t)TIM4_IT_UPDATE;      /* UIE=1 (inline, no SPL)    */
+    TIM4->SR1 &= (uint8_t)~TIM4_FLAG_UPDATE;        /* clear stale UIF (inline)  */
+    TIM4->IER |= (uint8_t)TIM4_IT_UPDATE;           /* UIE=1 (inline, no SPL)    */
     enableInterrupts();
     TIM4_Cmd(ENABLE);
 }
@@ -75,7 +75,7 @@ static void awu_init(void) {
     AWU->CSR &= (uint8_t)~AWU_CSR_AWUEN;   /* disable before reconfiguring  */
     AWU->APR  = (uint8_t)62;               /* step 2: APR first             */
     AWU->TBR  = (uint8_t)13;               /* step 3: AWUTB second          */
-    (void)AWU->CSR;                         /* clear stale AWUF before enable */
+    (void)AWU->CSR;                        /* clear stale AWUF before enable */
     AWU->CSR |= (uint8_t)AWU_CSR_AWUEN;    /* step 4: enable                */
 }
 
@@ -97,6 +97,16 @@ static inline void solenoid_off(void) { GPIO_WriteLow(SOL_PORT,  SOL_PIN); }
 static inline void led_on(void)  { GPIO_WriteLow(LED_PORT,  LED_PIN); }
 static inline void led_off(void) { GPIO_WriteHigh(LED_PORT, LED_PIN); }
 
+static inline void delay_ms(uint16_t ms) {
+    uint32_t i;
+    for (i = 0; i < ((F_CPU / 87140UL) * ms); i++)
+        __asm__("nop");
+}
+
+static inline uint16_t millis(void) {
+    return millis_counter;
+}
+
 void main(void) {
     uint16_t voltage;
 
@@ -116,8 +126,21 @@ void main(void) {
 
     tm1637_init();
     adc_init();
+    tim4_init();
     //exti_init();   /* re-enable together with button GPIO_Init above      */
     awu_init();
+
+    // Self-test: turn test LED on and display voltage for 5 seconds.
+    led_on();
+    uint16_t millis_start = millis();
+    while ((millis() - millis_start) < 5000U)
+    {
+        /* Read battery voltage (units of 10 mV: 1200 = 12.00 V).       */
+        voltage = adc_read_voltage_avg_10mv();
+        tm1637_display_voltage(voltage, TM1637_BRIGHTNESS_MAX);
+        delay_ms(100);
+    }
+    led_off();
 
     /* AWU requires interrupts enabled (I=0) to enter Active-halt mode.
      * With I=1 the HALT instruction falls back to full Halt where AWU has
