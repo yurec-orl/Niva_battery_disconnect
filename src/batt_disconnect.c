@@ -13,10 +13,15 @@
 // Solenoid driver on PD6: HIGH = 2N7000 ON -> IRF4905 ON -> solenoid energized -> battery DISCONNECTS
 #define SOL_PORT            GPIOD
 #define SOL_PIN             GPIO_PIN_6
-#define BTN_UP_PORT         GPIOC
+// Door switch on PC3: LOW = door open (EXTI_PORTC, vector 5)
+#define DOOR_PORT           GPIOC
+#define DOOR_PIN            GPIO_PIN_3
+// PB4/PB5 are true open-drain (I2C SCL/SDA) -- no internal pull-up.
+// Both buttons on PORTD: BTN_UP=PD3, BTN_DOWN=PD2 (EXTI_PORTD, vector 6).
+#define BTN_UP_PORT         GPIOD
 #define BTN_UP_PIN          GPIO_PIN_3
-#define BTN_DOWN_PORT       GPIOB
-#define BTN_DOWN_PIN        GPIO_PIN_4
+#define BTN_DOWN_PORT       GPIOD
+#define BTN_DOWN_PIN        GPIO_PIN_2
 // Disconnect threshold: 12.1V = 1210 units of 10mV
 #define THRESH_10MV         1210U
 
@@ -80,10 +85,12 @@ static void awu_init(void) {
 }
 
 static void exti_init(void) {
-    /* Buttons pull to GND when pressed -- detect falling edge.
-     * GPIO must be in _IT mode for EXTI to fire. */
-    EXTI_SetExtIntSensitivity(EXTI_PORT_GPIOC, EXTI_SENSITIVITY_FALL_ONLY); /* BTN_UP  PC3 */
-    EXTI_SetExtIntSensitivity(EXTI_PORT_GPIOB, EXTI_SENSITIVITY_FALL_ONLY); /* BTN_DOWN PB4 */
+    /* Door switch on PC3 (EXTI_PORTC, vector 5): wake on falling edge
+     * (door opens = pin goes LOW).
+     * Both buttons on PORTD (EXTI_PORTD, vector 6): BTN_UP=PD3, BTN_DOWN=PD2.
+     * ISR distinguishes pins by reading IDR. */
+    EXTI_SetExtIntSensitivity(EXTI_PORT_GPIOC, EXTI_SENSITIVITY_FALL_ONLY);
+    EXTI_SetExtIntSensitivity(EXTI_PORT_GPIOD, EXTI_SENSITIVITY_FALL_ONLY);
 }
 
 #define DEBOUNCE_COUNT  4U
@@ -115,19 +122,27 @@ void main(void) {
     GPIO_Init(SOL_PORT, SOL_PIN, GPIO_MODE_OUT_PP_LOW_SLOW);
 
     /* Inputs */
-    GPIO_Init(IGN_PORT, IGN_PIN, GPIO_MODE_IN_FL_NO_IT);
-    /* Button pins: commented out until 100nF debounce caps are installed.
-     * Without caps the high-impedance pins pick up EMI and fire EXTI
-     * continuously, preventing Active-halt from sleeping.                   */
-    //GPIO_Init(BTN_UP_PORT,   BTN_UP_PIN,   GPIO_MODE_IN_PU_IT);
-    //GPIO_Init(BTN_DOWN_PORT, BTN_DOWN_PIN, GPIO_MODE_IN_PU_IT);
+    GPIO_Init(IGN_PORT,  IGN_PIN,  GPIO_MODE_IN_FL_NO_IT);
+    /* PD4 is unused but shares EXTI_PORTD with the buttons. Left floating
+     * it picks up EMI and generates spurious EXTI_PORTD wakeups. Pull it
+     * up (no IT) to keep it stable.                                         */
+    GPIO_Init(GPIOD, GPIO_PIN_4, GPIO_MODE_IN_PU_NO_IT);
+    /* IT-mode pins must be initialised AFTER disableInterrupts().
+     * With 100nF debounce caps, pins start at 0V (cap uncharged).
+     * Activating pull-up causes a rising edge → EXTI fires immediately
+     * if interrupts are enabled. DI prevents that spurious EXTI.         */
 
     disableInterrupts();
+
+    GPIO_Init(DOOR_PORT,     DOOR_PIN,     GPIO_MODE_IN_PU_IT);
+    GPIO_Init(BTN_UP_PORT,   BTN_UP_PIN,   GPIO_MODE_IN_PU_IT);
+    GPIO_Init(BTN_DOWN_PORT, BTN_DOWN_PIN, GPIO_MODE_IN_PU_IT);
+
+    exti_init();     /* set FALL_ONLY sensitivity before re-enabling IRQs  */
 
     tm1637_init();
     adc_init();
     tim4_init();
-    //exti_init();   /* re-enable together with button GPIO_Init above      */
     awu_init();
 
     // Self-test: turn test LED on and display voltage for 5 seconds.
@@ -159,9 +174,9 @@ void main(void) {
 
             /* Display voltage on TM1637 (e.g. "12.0"). Wrap with di/ei to
              * prevent TIM4 ISR (if active) from corrupting the bit-bang.    */
-            // disableInterrupts();
-            // tm1637_display_voltage(voltage, TM1637_BRIGHTNESS_MAX);
-            // enableInterrupts();
+            disableInterrupts();
+            tm1637_display_voltage(voltage, TM1637_BRIGHTNESS_MAX);
+            enableInterrupts();
 
             /* Activate solenoid when:
              *   - voltage below threshold (battery flat), AND
@@ -187,6 +202,18 @@ void main(void) {
 
         if (++wakeup_count >= AWU_WAKEUPS_PER_CHECK) {
             wakeup_count = 0;   /* reset -- next wakeup triggers a new check */
+        }
+
+        /* Button press detection.
+         * btn_up_pressed / btn_down_pressed are set by the EXTI ISRs
+         * (stm8s_it.c) and cleared here after handling.
+         * Either button wakes from Active-halt via EXTI and arrives here.   */
+        if (btn_up_pressed || btn_down_pressed) {
+            btn_up_pressed   = FALSE;
+            btn_down_pressed = FALSE;
+            led_on();          /* DIAG: confirm button detected -- LED on    */
+        } else {
+            led_off();
         }
 
         /* Sleep until next AWU wakeup (~2 s). On wake the AWU ISR clears

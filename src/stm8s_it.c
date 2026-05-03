@@ -25,23 +25,21 @@ INTERRUPT_HANDLER(AWU_IRQHandler,                    1) {
 }
 INTERRUPT_HANDLER(CLK_IRQHandler,                    2) {}
 INTERRUPT_HANDLER(EXTI_PORTA_IRQHandler,             3) {}
-INTERRUPT_HANDLER(EXTI_PORTB_IRQHandler,             4) {
-    /* BTN_DOWN on PB4 -- verify pin is still LOW after the edge.
-     * A capacitive glitch causes a brief dip then returns HIGH immediately.
-     * A real button press holds the pin LOW. Direct IDR read -- no SPL call. */
-    if ((GPIOB->IDR & (uint8_t)GPIO_PIN_4) == 0) {
-        btn_down_pressed = TRUE;
-        //GPIOB->ODR ^= (uint8_t)GPIO_PIN_5;
-    }
-}
+INTERRUPT_HANDLER(EXTI_PORTB_IRQHandler,             4) {}
 INTERRUPT_HANDLER(EXTI_PORTC_IRQHandler, 5) {
-    /* BTN_UP on PC3 -- same glitch filter. */
-    if ((GPIOC->IDR & (uint8_t)GPIO_PIN_3) == 0) {
+    /* Door switch on PC3: LOW = door open.
+      * Placeholder -- door alarm logic not yet implemented.               */
+}
+INTERRUPT_HANDLER(EXTI_PORTD_IRQHandler, 6) {
+    /* Both buttons share EXTI_PORTD; distinguish by IDR bit.
+     * BTN_UP=PD3, BTN_DOWN=PD2. Glitch filter: only act if pin still LOW. */
+    if ((GPIOD->IDR & (uint8_t)GPIO_PIN_3) == 0) {
         btn_up_pressed = TRUE;
-        //GPIOB->ODR ^= (uint8_t)GPIO_PIN_5;
+    }
+    if ((GPIOD->IDR & (uint8_t)GPIO_PIN_2) == 0) {
+        btn_down_pressed = TRUE;
     }
 }
-INTERRUPT_HANDLER(EXTI_PORTD_IRQHandler,             6) {}
 INTERRUPT_HANDLER(EXTI_PORTE_IRQHandler,             7) {}
 INTERRUPT_HANDLER(SPI_IRQHandler,                    10) {}
 INTERRUPT_HANDLER(TIM1_UPD_OVF_TRG_BRK_IRQHandler,   11) {}
