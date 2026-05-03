@@ -7,7 +7,7 @@
  * ADC driver for battery voltage sensing (STM8S103)
  *
  * Hardware:
- *   PD3 / AIN4  -- ADC channel 4
+ *   PD5 / AIN5  -- ADC channel 5 (battery voltage divider)
  *   Voltage divider: R1 = 1M, R2 = 220k
  *   Ratio = 220k / (1000k + 220k) = 220/1220 = 0.18033
  *

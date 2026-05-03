@@ -27,6 +27,12 @@
 #define _TIM4_
 #include "stm8s_tim4.h"
 
+#define _AWU_
+#include "stm8s_awu.h"
+
+#define _EXTI_
+#include "stm8s_exti.h"
+
 /* Uncomment as needed:
 #define _ADC1_
 #define _ADC2_

@@ -29,7 +29,7 @@ void adc_init(void) {
      * ADC1_Init parameters:
      *   ConversionMode : SINGLE  (software-triggered, one shot)
      *   Channel        : ADC1_CHANNEL_5  (PD5/AIN5)
-     *   Prescaler      : FCPU/8 -> 16MHz/8 = 2MHz (within 1-4MHz spec)
+     *   Prescaler      : FCPU/2 -> 2MHz/2 = 1MHz (minimum valid per RM: 1-4MHz)
      *   ExtTrigger     : ADC1_EXTTRIG_TIM, DISABLED (software trigger)
      *   Align          : RIGHT (10-bit value in [9:0])
      *   SchmittTrigCh  : ADC1_SCHMITTTRIG_CHANNEL5, DISABLE
@@ -37,7 +37,7 @@ void adc_init(void) {
      */
     ADC1_Init(ADC1_CONVERSIONMODE_SINGLE,
               ADC1_CHANNEL_5,
-              ADC1_PRESSEL_FCPU_D8,
+              ADC1_PRESSEL_FCPU_D2,
               ADC1_EXTTRIG_TIM, DISABLE,
               ADC1_ALIGN_RIGHT,
               ADC1_SCHMITTTRIG_CHANNEL5, DISABLE);
@@ -73,10 +73,12 @@ uint16_t adc_read_voltage_10mv(void) {
 uint16_t adc_read_voltage_avg_10mv(void) {
     uint8_t  i;
     uint32_t sum = 0;
-    /*
-     * Average ADC_AVG_SAMPLES raw readings, then convert once.
-     * uint32_t sum: max = 1023 * 10 = 10230, well within range.
-     */
+
+    // Reset ADC power after wake up from halt.
+    ADC1_Cmd(DISABLE);                          /* ADON=0: power off         */
+    ADC1_Cmd(ENABLE);                           /* ADON=1: power on, tSTAB   */
+    { volatile uint8_t t = 15; while (t--); }   /* wait ≥3µs                 */
+
     for (i = 0; i < ADC_AVG_SAMPLES; i++)
         sum += adc_read_raw();
     return (uint16_t)((sum * ADC_NUM) / ((uint32_t)ADC_AVG_SAMPLES * ADC_DEN * 10UL));
