@@ -51,12 +51,4 @@ INTERRUPT_HANDLER(UART1_RX_IRQHandler,               18) {}
 INTERRUPT_HANDLER(I2C_IRQHandler,                    19) {}
 INTERRUPT_HANDLER(ADC1_IRQHandler,                   22) {}
 
-/* TIM4 update/overflow -- fires every ~5ms at 2MHz */
-INTERRUPT_HANDLER(TIM4_UPD_OVF_IRQHandler,           23) {
-    /* Inline register write -- no SPL call, no SDCC parameter slot */
-    TIM4->SR1 &= (uint8_t)~TIM4_FLAG_UPDATE;
-
-    millis_counter+=5;
-}
-
 INTERRUPT_HANDLER(EEPROM_EEC_IRQHandler,             24) {}

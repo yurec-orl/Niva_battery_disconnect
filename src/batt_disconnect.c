@@ -22,8 +22,17 @@
 #define BTN_UP_PIN          GPIO_PIN_3
 #define BTN_DOWN_PORT       GPIOD
 #define BTN_DOWN_PIN        GPIO_PIN_2
-// Disconnect threshold: 12.1V = 1210 units of 10mV
-#define THRESH_10MV         1210U
+#define SOLENOID_MAX_RETRIES  3U
+
+/* Display power: PC7, P-FET gate -- LOW = display ON, HIGH = display OFF */
+#define DISP_PWR_PORT       GPIOC
+#define DISP_PWR_PIN        GPIO_PIN_7
+
+/* Voltage disconnect threshold stored in EEPROM as tenths of volt (121 = 12.1V) */
+#define EEPROM_THRESH_ADDR  ((uint32_t)0x4000)
+#define THRESH_DEFAULT      121U    /* 12.1 V */
+#define THRESH_MIN          100U    /* 10.0 V */
+#define THRESH_MAX          130U    /* 13.0 V */
 
 /* AWU hardware maximum is ~30 s. For longer intervals use a software
  * counter: increment on every wakeup, act every AWU_WAKEUPS_PER_CHECK.
@@ -34,37 +43,6 @@
 #define AWU_PERIOD_S            2U
 #define CHECK_INTERVAL_S        3600U
 #define AWU_WAKEUPS_PER_CHECK   (CHECK_INTERVAL_S / AWU_PERIOD_S)  /* 1800 */
-
-/*
- * TIM4 periodic interrupt -- ~5ms period at 2MHz.
- *
- * TM1637 conflict: ISR entry/exit (~15us at 2MHz) pauses the bit-bang clock
- * mid-transaction. Fix: wrap every tm1637_* call with di/ei.
- *
- * CRITICAL -- SDCC non-reentrant calling convention:
- *   Do NOT call SPL functions from inside the ISR (e.g. GPIO_WriteReverse,
- *   TIM4_ClearITPendingBit). SDCC stores function parameters at fixed static
- *   RAM addresses. If the ISR calls a function while mainline code is mid-call
- *   to another function sharing that RAM slot, the parameter is corrupted ->
- *   wrong register written -> TRAP -> freeze.
- *   Confirmed by bare-metal test (see TIM4_BARE_METAL_EXAMPLE.md).
- *   Fix: use inline struct-member writes in the ISR (TIM4->SR1, GPIOB->ODR).
- *
- * Active-halt / AWU:
- *   MCU sleeps in active-halt between main loop iterations. AWU wakes it every
- *   ~10 seconds (AWU_TIMEBASE_2S x APR=5 internally). Buttons on EXTI_PORTB
- *   (PB4) and EXTI_PORTC (PC3) also wake the MCU mid-cycle.
- *   TIM4 counter freezes during halt and resumes automatically on wake -- the
- *   millis_counter is therefore only valid while the MCU is active.
- */
-
-static void tim4_init(void) {
-    TIM4_TimeBaseInit(TIM4_PRESCALER_128, 78);
-    TIM4->SR1 &= (uint8_t)~TIM4_FLAG_UPDATE;        /* clear stale UIF (inline)  */
-    TIM4->IER |= (uint8_t)TIM4_IT_UPDATE;           /* UIE=1 (inline, no SPL)    */
-    enableInterrupts();
-    TIM4_Cmd(ENABLE);
-}
 
 static void awu_init(void) {
     /* RM 12.3.1 order: disable -> APR -> AWUTB -> AWUEN (enable).
@@ -95,31 +73,114 @@ static void exti_init(void) {
 
 #define DEBOUNCE_COUNT  4U
 
-static inline bool ignition_on(void) {
+static bool ignition_on(void) {
     return GPIO_ReadInputPin(IGN_PORT, IGN_PIN) != RESET;
 }
-static inline void solenoid_on(void)  { GPIO_WriteHigh(SOL_PORT, SOL_PIN); }
-static inline void solenoid_off(void) { GPIO_WriteLow(SOL_PORT,  SOL_PIN); }
+static void solenoid_on(void)  { GPIO_WriteHigh(SOL_PORT, SOL_PIN); }
+static void solenoid_off(void) { GPIO_WriteLow(SOL_PORT,  SOL_PIN); }
 /* LED is active-LOW: cathode on PB5, anode to VCC via resistor. */
-static inline void led_on(void)  { GPIO_WriteLow(LED_PORT,  LED_PIN); }
-static inline void led_off(void) { GPIO_WriteHigh(LED_PORT, LED_PIN); }
+static void led_on(void)  { GPIO_WriteLow(LED_PORT,  LED_PIN); }
+static void led_off(void) { GPIO_WriteHigh(LED_PORT, LED_PIN); }
 
-static inline void delay_ms(uint16_t ms) {
+static void delay_ms(uint16_t ms) {
     uint32_t i;
     for (i = 0; i < ((F_CPU / 87140UL) * ms); i++)
         __asm__("nop");
 }
 
-static inline uint16_t millis(void) {
-    return millis_counter;
+/* File-scope state -- shared between monitoring loop and ui_run() */
+static uint16_t wakeup_count        = 0;
+static uint8_t  solenoid_pulse_count = 0;
+static uint8_t  threshold_x10       = THRESH_DEFAULT;
+
+/* --- Display power (PC7, P-FET gate: LOW = ON, HIGH = OFF) --- */
+static void display_power_on(void)  { GPIO_WriteLow(DISP_PWR_PORT,  DISP_PWR_PIN); }
+static void display_power_off(void) { GPIO_WriteHigh(DISP_PWR_PORT, DISP_PWR_PIN); }
+
+/* --- Threshold persistence (bare-metal EEPROM at 0x4000) --- */
+static void load_threshold(void) {
+    uint8_t val = FLASH_ReadByte(EEPROM_THRESH_ADDR);
+    threshold_x10 = (val >= THRESH_MIN && val <= THRESH_MAX) ? val : (uint8_t)THRESH_DEFAULT;
+}
+
+static void save_threshold(void) {
+    FLASH_Unlock(FLASH_MEMTYPE_DATA);
+    FLASH_ProgramByte(EEPROM_THRESH_ADDR, threshold_x10);
+    FLASH_Lock(FLASH_MEMTYPE_DATA);
+}
+
+/* --- Display helpers --- */
+static void display_show_threshold(void) {
+    disableInterrupts();
+    tm1637_display_voltage((uint16_t)threshold_x10 * 10U, TM1637_BRIGHTNESS_MAX);
+    enableInterrupts();
+}
+
+static void display_blink_boundary(void) {
+    uint8_t b;
+    for (b = 0; b < 3; b++) {
+        display_power_off(); delay_ms(25);
+        display_power_on();  delay_ms(25);
+    }
+}
+
+/* --- Settings UI --- */
+static void ui_run(void) {
+    uint8_t  changed = 0;
+    uint16_t timeout = 0;
+
+    /* First press: wake display and show current value; do NOT change threshold. */
+    btn_up_pressed   = FALSE;
+    btn_down_pressed = FALSE;
+    display_power_on();
+    display_show_threshold();
+
+    while (timeout < 5000U) {
+        delay_ms(50);
+        timeout += 50U;
+
+        if (btn_up_pressed || btn_down_pressed) {
+            timeout = 0U;       /* reset on any press, including boundary */
+
+            if (btn_up_pressed) {           /* UP wins if both pressed */
+                if (threshold_x10 < THRESH_MAX) {
+                    threshold_x10++;
+                    changed = 1;
+                    display_show_threshold();
+                } else {
+                    display_blink_boundary();
+                    display_show_threshold();
+                }
+            } else {
+                if (threshold_x10 > THRESH_MIN) {
+                    threshold_x10--;
+                    changed = 1;
+                    display_show_threshold();
+                } else {
+                    display_blink_boundary();
+                    display_show_threshold();
+                }
+            }
+            btn_up_pressed   = FALSE;
+            btn_down_pressed = FALSE;
+        }
+    }
+
+    if (changed) {
+        save_threshold();
+    }
+    display_power_off();
+    wakeup_count = 0;   /* full AWU interval before next solenoid check */
 }
 
 void main(void) {
     uint16_t voltage;
+    uint8_t  i;
 
     /* Outputs */
-    GPIO_Init(LED_PORT, LED_PIN, GPIO_MODE_OUT_PP_HIGH_SLOW); /* HIGH = LED off (active-low) */
-    GPIO_Init(SOL_PORT, SOL_PIN, GPIO_MODE_OUT_PP_LOW_SLOW);
+    GPIO_Init(LED_PORT,      LED_PIN,      GPIO_MODE_OUT_PP_HIGH_SLOW); /* HIGH = LED off (active-low) */
+    GPIO_Init(SOL_PORT,      SOL_PIN,      GPIO_MODE_OUT_PP_LOW_SLOW);
+    GPIO_Init(DISP_PWR_PORT, DISP_PWR_PIN, GPIO_MODE_OUT_PP_HIGH_SLOW); /* HIGH = display OFF */
 
     /* Inputs */
     GPIO_Init(IGN_PORT,  IGN_PIN,  GPIO_MODE_IN_FL_NO_IT);
@@ -129,7 +190,7 @@ void main(void) {
     GPIO_Init(GPIOD, GPIO_PIN_4, GPIO_MODE_IN_PU_NO_IT);
     /* IT-mode pins must be initialised AFTER disableInterrupts().
      * With 100nF debounce caps, pins start at 0V (cap uncharged).
-     * Activating pull-up causes a rising edge → EXTI fires immediately
+     * Activating pull-up causes a rising edge -> EXTI fires immediately
      * if interrupts are enabled. DI prevents that spurious EXTI.         */
 
     disableInterrupts();
@@ -142,19 +203,20 @@ void main(void) {
 
     tm1637_init();
     adc_init();
-    tim4_init();
     awu_init();
+    load_threshold();
 
-    // Self-test: turn test LED on and display voltage for 5 seconds.
+    /* Self-test: LED on, display voltage for ~5 s (50 x 100 ms). */
     led_on();
-    uint16_t millis_start = millis();
-    while ((millis() - millis_start) < 5000U)
-    {
-        /* Read battery voltage (units of 10 mV: 1200 = 12.00 V).       */
+    display_power_on();
+    for (i = 0; i < 50; i++) {
         voltage = adc_read_voltage_avg_10mv();
+        disableInterrupts();
         tm1637_display_voltage(voltage, TM1637_BRIGHTNESS_MAX);
+        enableInterrupts();
         delay_ms(100);
     }
+    display_power_off();
     led_off();
 
     /* AWU requires interrupts enabled (I=0) to enter Active-halt mode.
@@ -163,8 +225,6 @@ void main(void) {
     enableInterrupts();
 
     while (1) {
-        static uint16_t wakeup_count = 0;
-
         /* Increment wakeup counter; act every AWU_WAKEUPS_PER_CHECK ticks.
          * On the very first boot (count==0) perform an immediate check so
          * the solenoid state is correct from the start.                     */
@@ -172,29 +232,20 @@ void main(void) {
             /* Read battery voltage (units of 10 mV: 1200 = 12.00 V).       */
             voltage = adc_read_voltage_avg_10mv();
 
-            /* Display voltage on TM1637 (e.g. "12.0"). Wrap with di/ei to
-             * prevent TIM4 ISR (if active) from corrupting the bit-bang.    */
-            disableInterrupts();
-            tm1637_display_voltage(voltage, TM1637_BRIGHTNESS_MAX);
-            enableInterrupts();
-
-            /* Activate solenoid when:
-             *   - voltage below threshold (battery flat), AND
-             *   - ignition is OFF (safety interlock -- never disconnect while
-             *     engine is running; alternator spikes can damage ECUs).
-             * Deactivate when voltage recovers or ignition turns on.        */
-            if (voltage < THRESH_10MV && !ignition_on()) {
-                solenoid_on();
-            } else {
-                solenoid_off();
-            }
-
-            /* DIAG: mirror solenoid state on LED for bench testing.
-             * LED is active-LOW (cathode on pin, anode to VCC).
-             * LED ON = solenoid active (battery disconnect triggered).
-             * Remove once solenoid wiring is verified.                      */
-            if (voltage < THRESH_10MV && !ignition_on()) {
+            /* Pulse solenoid when voltage is low and ignition is off.
+             * Up to SOLENOID_MAX_RETRIES attempts; retries are spaced one
+             * full AWU interval (~1 hour) apart.
+             * Normally the MCU loses power once the disconnect fires.
+             * The retry cap protects the solenoid and gate if the switch
+             * malfunctions and the battery stays connected.                 */
+            if (voltage < (uint16_t)threshold_x10 * 10U && !ignition_on()) {
                 led_on();
+                if (solenoid_pulse_count < SOLENOID_MAX_RETRIES) {
+                    solenoid_on();
+                    delay_ms(1000);
+                    solenoid_off();
+                    solenoid_pulse_count++;
+                }
             } else {
                 led_off();
             }
@@ -204,16 +255,11 @@ void main(void) {
             wakeup_count = 0;   /* reset -- next wakeup triggers a new check */
         }
 
-        /* Button press detection.
+        /* Button press: open settings UI.
          * btn_up_pressed / btn_down_pressed are set by the EXTI ISRs
-         * (stm8s_it.c) and cleared here after handling.
-         * Either button wakes from Active-halt via EXTI and arrives here.   */
+         * (stm8s_it.c). ui_run() consumes and clears them internally.      */
         if (btn_up_pressed || btn_down_pressed) {
-            btn_up_pressed   = FALSE;
-            btn_down_pressed = FALSE;
-            led_on();          /* DIAG: confirm button detected -- LED on    */
-        } else {
-            led_off();
+            ui_run();
         }
 
         /* Sleep until next AWU wakeup (~2 s). On wake the AWU ISR clears

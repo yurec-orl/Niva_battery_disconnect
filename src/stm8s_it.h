@@ -28,14 +28,8 @@ INTERRUPT_HANDLER(UART1_TX_IRQHandler,              17);
 INTERRUPT_HANDLER(UART1_RX_IRQHandler,              18);
 INTERRUPT_HANDLER(I2C_IRQHandler,                   19);
 INTERRUPT_HANDLER(ADC1_IRQHandler,                  22);
-INTERRUPT_HANDLER(TIM4_UPD_OVF_IRQHandler,          23);
 INTERRUPT_HANDLER(EEPROM_EEC_IRQHandler,            24);
 INTERRUPT_HANDLER_TRAP(TRAP_IRQHandler);
-
-/* Shared state updated by TIM4 ISR */
-extern volatile uint32_t millis_counter;
-extern volatile uint8_t  btn_up_hist;
-extern volatile uint8_t  btn_down_hist;
 
 /* Button wakeup flags set by EXTI ISRs, cleared by main loop */
 extern volatile bool btn_up_pressed;

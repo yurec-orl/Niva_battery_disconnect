@@ -33,6 +33,10 @@
 #define _EXTI_
 #include "stm8s_exti.h"
 
+#define _FLASH_
+#include "stm8s_flash.h"
+
+
 /* Uncomment as needed:
 #define _ADC1_
 #define _ADC2_
