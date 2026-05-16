@@ -33,10 +33,10 @@ INTERRUPT_HANDLER(EXTI_PORTC_IRQHandler, 5) {
 INTERRUPT_HANDLER(EXTI_PORTD_IRQHandler, 6) {
     /* Both buttons share EXTI_PORTD; distinguish by IDR bit.
      * BTN_UP=PD3, BTN_DOWN=PD2. Glitch filter: only act if pin still LOW. */
-    if ((GPIOD->IDR & (uint8_t)GPIO_PIN_3) == 0) {
+    if ((BTN_UP_PORT->IDR & (uint8_t)BTN_UP_PIN) == 0) {
         btn_up_pressed = TRUE;
     }
-    if ((GPIOD->IDR & (uint8_t)GPIO_PIN_2) == 0) {
+    if ((BTN_DOWN_PORT->IDR & (uint8_t)BTN_DOWN_PIN) == 0) {
         btn_down_pressed = TRUE;
     }
 }

@@ -16,12 +16,6 @@
 // Door switch on PC3: LOW = door open (EXTI_PORTC, vector 5)
 #define DOOR_PORT           GPIOC
 #define DOOR_PIN            GPIO_PIN_3
-// PB4/PB5 are true open-drain (I2C SCL/SDA) -- no internal pull-up.
-// Both buttons on PORTD: BTN_UP=PD3, BTN_DOWN=PD2 (EXTI_PORTD, vector 6).
-#define BTN_UP_PORT         GPIOD
-#define BTN_UP_PIN          GPIO_PIN_3
-#define BTN_DOWN_PORT       GPIOD
-#define BTN_DOWN_PIN        GPIO_PIN_2
 #define SOLENOID_MAX_RETRIES  3U
 
 /* Display power: PC7, P-FET gate -- LOW = display ON, HIGH = display OFF */

@@ -3,6 +3,12 @@
 
 #include "stm8s.h"
 
+// Both buttons on PORTD: BTN_UP=PD3, BTN_DOWN=PD2 (EXTI_PORTD, vector 6).
+#define BTN_UP_PORT         GPIOD
+#define BTN_UP_PIN          GPIO_PIN_2
+#define BTN_DOWN_PORT       GPIOD
+#define BTN_DOWN_PIN        GPIO_PIN_3
+
 /*
  * SDCC STM8: interrupt vector table entries are generated ONLY in the
  * compilation unit that contains main(). Declaring handlers here with
