@@ -60,6 +60,13 @@ static void awu_init(void) {
     AWU->TBR  = (uint8_t)13;               /* step 3: AWUTB second          */
     (void)AWU->CSR;                        /* clear stale AWUF before enable */
     AWU->CSR |= (uint8_t)AWU_CSR_AWUEN;    /* step 4: enable                */
+
+    /* Power off main voltage regulator during Active-Halt.
+     * SPL names this bit CLK_ICKR_SWUAH ("Slow Wake-up from Active Halt"),
+     * bit 5 of CLK_ICKR -- same as REGAH in the RM (0x20).
+     * Reduces Active-Halt current from ~13µA to ~1µA at cost of ~150µs
+     * longer wakeup time -- acceptable for a 2s AWU period.                */
+    CLK->ICKR |= (uint8_t)CLK_ICKR_SWUAH;
 }
 
 static void exti_init(void) {
@@ -94,8 +101,10 @@ static uint8_t  solenoid_pulse_count = 0;
 static uint8_t  threshold_x10       = THRESH_DEFAULT;
 
 /* --- Display power (PC7, P-FET gate: LOW = ON, HIGH = OFF) --- */
-static void display_power_on(void)  { GPIO_WriteLow(DISP_PWR_PORT,  DISP_PWR_PIN); }
-static void display_power_off(void) { GPIO_WriteHigh(DISP_PWR_PORT, DISP_PWR_PIN); }
+//static void display_power_on(void)  { GPIO_WriteLow(DISP_PWR_PORT,  DISP_PWR_PIN); }
+//static void display_power_off(void) { GPIO_WriteHigh(DISP_PWR_PORT, DISP_PWR_PIN); }
+static void display_power_on(void)  { GPIO_WriteHigh(DISP_PWR_PORT, DISP_PWR_PIN); }
+static void display_power_off(void) { GPIO_WriteLow(DISP_PWR_PORT,  DISP_PWR_PIN); }
 
 /* --- Threshold persistence (bare-metal EEPROM at 0x4000) --- */
 static void load_threshold(void) {
@@ -178,7 +187,8 @@ void main(void) {
     /* Outputs */
     GPIO_Init(LED_PORT,      LED_PIN,      GPIO_MODE_OUT_PP_HIGH_SLOW); /* HIGH = LED off (active-low) */
     GPIO_Init(SOL_PORT,      SOL_PIN,      GPIO_MODE_OUT_PP_LOW_SLOW);
-    GPIO_Init(DISP_PWR_PORT, DISP_PWR_PIN, GPIO_MODE_OUT_PP_HIGH_SLOW); /* HIGH = display OFF */
+    //GPIO_Init(DISP_PWR_PORT, DISP_PWR_PIN, GPIO_MODE_OUT_PP_HIGH_SLOW); /* HIGH = display OFF */
+    GPIO_Init(DISP_PWR_PORT, DISP_PWR_PIN, GPIO_MODE_OUT_PP_LOW_SLOW); /* LOW = display OFF */
 
     /* Inputs */
     GPIO_Init(IGN_PORT,  IGN_PIN,  GPIO_MODE_IN_FL_NO_IT);

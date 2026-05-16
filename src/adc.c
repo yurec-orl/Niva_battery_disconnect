@@ -81,5 +81,8 @@ uint16_t adc_read_voltage_avg_10mv(void) {
 
     for (i = 0; i < ADC_AVG_SAMPLES; i++)
         sum += adc_read_raw();
+
+    ADC1_Cmd(DISABLE);  /* ADON=0: power off ADC -- keeps HSI from running in Active-Halt */
+
     return (uint16_t)((sum * ADC_NUM) / ((uint32_t)ADC_AVG_SAMPLES * ADC_DEN * 10UL));
 }
