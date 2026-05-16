@@ -55,12 +55,11 @@ static void awu_init(void) {
     (void)AWU->CSR;                        /* clear stale AWUF before enable */
     AWU->CSR |= (uint8_t)AWU_CSR_AWUEN;    /* step 4: enable                */
 
-    /* Power off main voltage regulator during Active-Halt.
-     * SPL names this bit CLK_ICKR_SWUAH ("Slow Wake-up from Active Halt"),
-     * bit 5 of CLK_ICKR -- same as REGAH in the RM (0x20).
-     * Reduces Active-Halt current from ~13µA to ~1µA at cost of ~150µs
-     * longer wakeup time -- acceptable for a 2s AWU period.                */
+    /* Power off main voltage regulator during Active-Halt. */
     CLK->ICKR |= (uint8_t)CLK_ICKR_SWUAH;
+
+    /* Flash power-down in Active-Halt/Halt (FLASH_CR1 bit 3). */
+    FLASH->CR1 |= (uint8_t)0x08;
 }
 
 static void exti_init(void) {
@@ -79,7 +78,7 @@ static bool ignition_on(void) {
 }
 static void solenoid_on(void)  { GPIO_WriteHigh(SOL_PORT, SOL_PIN); }
 static void solenoid_off(void) { GPIO_WriteLow(SOL_PORT,  SOL_PIN); }
-/* LED is active-LOW: cathode on PB5, anode to VCC via resistor. */
+/* LED is active-LOW */
 static void led_on(void)  { GPIO_WriteLow(LED_PORT,  LED_PIN); }
 static void led_off(void) { GPIO_WriteHigh(LED_PORT, LED_PIN); }
 
@@ -89,14 +88,11 @@ static void delay_ms(uint16_t ms) {
         __asm__("nop");
 }
 
-/* File-scope state -- shared between monitoring loop and ui_run() */
-static uint16_t wakeup_count        = 0;
-static uint8_t  solenoid_pulse_count = 0;
-static uint8_t  threshold_x10       = THRESH_DEFAULT;
+static uint16_t wakeup_count            = 0;
+static uint8_t  solenoid_pulse_count    = 0;
+static uint8_t  threshold_x10           = THRESH_DEFAULT;
 
 /* --- Display power (PC7, P-FET gate: LOW = ON, HIGH = OFF) --- */
-//static void display_power_on(void)  { GPIO_WriteLow(DISP_PWR_PORT,  DISP_PWR_PIN); }
-//static void display_power_off(void) { GPIO_WriteHigh(DISP_PWR_PORT, DISP_PWR_PIN); }
 static void display_power_on(void)  { GPIO_WriteHigh(DISP_PWR_PORT, DISP_PWR_PIN); }
 static void display_power_off(void) { GPIO_WriteLow(DISP_PWR_PORT,  DISP_PWR_PIN); }
 
@@ -181,32 +177,25 @@ void main(void) {
     /* Outputs */
     GPIO_Init(LED_PORT,      LED_PIN,      GPIO_MODE_OUT_PP_HIGH_SLOW); /* HIGH = LED off (active-low) */
     GPIO_Init(SOL_PORT,      SOL_PIN,      GPIO_MODE_OUT_PP_LOW_SLOW);
-    //GPIO_Init(DISP_PWR_PORT, DISP_PWR_PIN, GPIO_MODE_OUT_PP_HIGH_SLOW); /* HIGH = display OFF */
     GPIO_Init(DISP_PWR_PORT, DISP_PWR_PIN, GPIO_MODE_OUT_PP_LOW_SLOW); /* LOW = display OFF */
 
     /* Inputs */
     GPIO_Init(IGN_PORT,  IGN_PIN,  GPIO_MODE_IN_FL_NO_IT);
-    /* PD4 is unused but shares EXTI_PORTD with the buttons. Left floating
-     * it picks up EMI and generates spurious EXTI_PORTD wakeups. Pull it
-     * up (no IT) to keep it stable.                                         */
     GPIO_Init(GPIOD, GPIO_PIN_4, GPIO_MODE_IN_PU_NO_IT);
-    /* IT-mode pins must be initialised AFTER disableInterrupts().
-     * With 100nF debounce caps, pins start at 0V (cap uncharged).
-     * Activating pull-up causes a rising edge -> EXTI fires immediately
-     * if interrupts are enabled. DI prevents that spurious EXTI.         */
 
     disableInterrupts();
 
+    /* IT-mode pins must be initialised AFTER disableInterrupts(). */
     GPIO_Init(DOOR_PORT,     DOOR_PIN,     GPIO_MODE_IN_PU_IT);
     GPIO_Init(BTN_UP_PORT,   BTN_UP_PIN,   GPIO_MODE_IN_PU_IT);
     GPIO_Init(BTN_DOWN_PORT, BTN_DOWN_PIN, GPIO_MODE_IN_PU_IT);
 
-    exti_init();     /* set FALL_ONLY sensitivity before re-enabling IRQs  */
+    exti_init();        /* set FALL_ONLY sensitivity before re-enabling IRQs  */
 
-    tm1637_init();
+    tm1637_init();      /* Init display. */
     adc_init();
     awu_init();
-    load_threshold();
+    load_threshold();   /* Load threshold from EEPROM. */
 
     /* Self-test: LED on, display voltage for ~5 s (50 x 100 ms). */
     led_on();
