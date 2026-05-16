@@ -84,7 +84,7 @@ static void led_off(void) { GPIO_WriteHigh(LED_PORT, LED_PIN); }
 
 static void delay_ms(uint16_t ms) {
     uint32_t i;
-    for (i = 0; i < ((F_CPU / 87140UL) * ms); i++)
+    for (i = 0; i < ((F_CPU / 697120UL) * ms); i++)
         __asm__("nop");
 }
 
@@ -126,7 +126,7 @@ static void display_blink_boundary(void) {
 
 /* --- Settings UI --- */
 static void ui_run(void) {
-    uint8_t  changed = 0;
+    uint8_t  old_threshold_x10 = threshold_x10;
     uint16_t timeout = 0;
 
     /* First press: wake display and show current value; do NOT change threshold. */
@@ -145,7 +145,6 @@ static void ui_run(void) {
             if (btn_up_pressed) {           /* UP wins if both pressed */
                 if (threshold_x10 < THRESH_MAX) {
                     threshold_x10++;
-                    changed = 1;
                     display_show_threshold();
                 } else {
                     display_blink_boundary();
@@ -154,7 +153,6 @@ static void ui_run(void) {
             } else {
                 if (threshold_x10 > THRESH_MIN) {
                     threshold_x10--;
-                    changed = 1;
                     display_show_threshold();
                 } else {
                     display_blink_boundary();
@@ -166,7 +164,7 @@ static void ui_run(void) {
         }
     }
 
-    if (changed) {
+    if (old_threshold_x10 != threshold_x10) {
         save_threshold();
     }
     display_power_off();
@@ -217,7 +215,6 @@ void main(void) {
         delay_ms(100);
     }
     display_power_off();
-    led_off();
 
     /* AWU requires interrupts enabled (I=0) to enter Active-halt mode.
      * With I=1 the HALT instruction falls back to full Halt where AWU has
@@ -225,6 +222,10 @@ void main(void) {
     enableInterrupts();
 
     while (1) {
+
+        // Make sure LED does not stay on.
+        led_off();
+
         /* Increment wakeup counter; act every AWU_WAKEUPS_PER_CHECK ticks.
          * On the very first boot (count==0) perform an immediate check so
          * the solenoid state is correct from the start.                     */
@@ -239,15 +240,13 @@ void main(void) {
              * The retry cap protects the solenoid and gate if the switch
              * malfunctions and the battery stays connected.                 */
             if (voltage < (uint16_t)threshold_x10 * 10U && !ignition_on()) {
-                led_on();
+                led_on();   // For indication - will stay on until next main loop iteration after halt.
                 if (solenoid_pulse_count < SOLENOID_MAX_RETRIES) {
                     solenoid_on();
                     delay_ms(1000);
                     solenoid_off();
                     solenoid_pulse_count++;
                 }
-            } else {
-                led_off();
             }
         }
 
